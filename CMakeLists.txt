@@ -13,12 +13,28 @@ add_executable(${PROJECT_NAME})
 target_sources(${PROJECT_NAME}
     PRIVATE
     src/main.cpp
+    src/platform/macos_app.cpp
+    src/render/metal_renderer.cpp
     PRIVATE FILE_SET CXX_MODULES FILES
-    src/greeting.cppm
+    src/platform/macos_app.cppm
+    src/render/metal_renderer.cppm
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
     -Wall
     -Wextra
     -Wpedantic
+)
+
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/metal-cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/metal-cpp-extensions"
+)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    "-framework AppKit"
+    "-framework Foundation"
+    "-framework Metal"
+    "-framework MetalKit"
+    "-framework QuartzCore"
 )

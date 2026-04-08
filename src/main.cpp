@@ -1,5 +1,5 @@
-import greeting;
+import platform.macos_app;
 
 int main() {
-    greet("World");
+    return platform::run_app();
 }
