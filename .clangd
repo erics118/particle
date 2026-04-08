@@ -3,7 +3,6 @@ Diagnostics:
 
 CompileFlags:
   CompilationDatabase: build
-  # Compiler: /opt/homebrew/opt/llvm@22/bin/clang++
 
 InlayHints:
   Enabled: true
@@ -12,3 +11,12 @@ InlayHints:
 
 Hover:
   ShowAKA: true
+---
+If:
+  PathMatch: third_party/.*
+
+Index:
+  Background: Skip
+
+Diagnostics:
+  Suppress: '*'
