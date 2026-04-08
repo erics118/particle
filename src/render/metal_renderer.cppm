@@ -1,12 +1,16 @@
 module;
 
-#include <Metal/MTLDevice.hpp>
 #include <Metal/Metal.hpp>
-#include <MetalKit/MetalKit.hpp>
+#include <QuartzCore/QuartzCore.hpp>
 
 export module render.metal_renderer;
 
 export namespace render {
+
+struct FrameContext {
+    CA::MetalDrawable* drawable;
+    MTL::RenderPassDescriptor* rpd;
+};
 
 class MetalRenderer {
    private:
@@ -21,7 +25,7 @@ class MetalRenderer {
     MetalRenderer(MTL::Device* pDevice);
 
     void resize(int width, int height);
-    void draw(MTK::View* pView);
+    void draw(const FrameContext& frame_context);
 };
 
 }  // namespace render

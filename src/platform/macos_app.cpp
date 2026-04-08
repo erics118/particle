@@ -35,7 +35,23 @@ class ViewDelegate : public MTK::ViewDelegate {
 
     // actually render the frame
     void drawInMTKView(MTK::View* pView) override {
-        _pRenderer->draw(pView);
+        if (pView == nullptr) {
+            return;
+        }
+
+        NS::SharedPtr<CA::MetalDrawable> pDrawable = NS::RetainPtr(pView->currentDrawable());
+        NS::SharedPtr<MTL::RenderPassDescriptor> pRpd = NS::RetainPtr(pView->currentRenderPassDescriptor());
+
+        if (!pDrawable || !pRpd) {
+            return;
+        }
+
+        auto frame_context = render::FrameContext{
+            .drawable = pDrawable.get(),
+            .rpd = pRpd.get(),
+        };
+
+        _pRenderer->draw(frame_context);
     }
 
     // handle window resizing

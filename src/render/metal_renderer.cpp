@@ -1,10 +1,7 @@
 module;
 
 #include <Foundation/Foundation.hpp>
-#include <Foundation/NSSharedPtr.hpp>
 #include <Metal/Metal.hpp>
-#include <MetalKit/MetalKit.hpp>
-#include <QuartzCore/QuartzCore.hpp>
 #include <cmath>
 
 module render.metal_renderer;
@@ -25,35 +22,46 @@ void MetalRenderer::resize(int width, int height) {
     height_ = height;
 }
 
-void MetalRenderer::draw(MTK::View* pView) {
-    if (pView == nullptr || !_pCommandQueue) {
+void MetalRenderer::draw(const FrameContext& frame_context) {
+    if (frame_context.drawable == nullptr ||
+        frame_context.rpd == nullptr ||
+        !_pCommandQueue) {
         return;
     }
 
     NS::SharedPtr<NS::AutoreleasePool> pPool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
 
-    NS::SharedPtr<CA::MetalDrawable> pDrawable = NS::RetainPtr(pView->currentDrawable());
-    NS::SharedPtr<MTL::RenderPassDescriptor> pRpd = NS::RetainPtr(pView->currentRenderPassDescriptor());
-
-    if (!pRpd || !pDrawable) {
-        return;
-    }
-
-    MTL::CommandBuffer* pCmd = _pCommandQueue->commandBuffer();
-    MTL::RenderCommandEncoder* pEnc = pCmd->renderCommandEncoder(pRpd.get());
-
     // draw blue color that pulses over time
     phase_ += 0.01;
     const double pulse = 0.2 * std::sin(phase_);
 
-    pRpd->colorAttachments()->object(0)->setClearColor(MTL::ClearColor::Make(
+    frame_context.rpd->colorAttachments()->object(0)->setClearColor(MTL::ClearColor::Make(
         kBaseColor.red,
         kBaseColor.green,
         kBaseColor.blue + pulse,
         kBaseColor.alpha));
 
+    MTL::CommandBuffer* pCmd = _pCommandQueue->commandBuffer();
+    MTL::RenderCommandEncoder* pEnc =
+        pCmd->renderCommandEncoder(frame_context.rpd);
+
+    if (pEnc == nullptr) {
+        return;
+    }
+
+    if (width_ > 0 && height_ > 0) {
+        pEnc->setViewport(MTL::Viewport{
+            .originX = 0.0,
+            .originY = 0.0,
+            .width = static_cast<double>(width_),
+            .height = static_cast<double>(height_),
+            .znear = 0.0,
+            .zfar = 1.0,
+        });
+    }
+
     pEnc->endEncoding();
-    pCmd->presentDrawable(pDrawable.get());
+    pCmd->presentDrawable(frame_context.drawable);
     pCmd->commit();
 }
 
