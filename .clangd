@@ -1,0 +1,14 @@
+Diagnostics:
+  UnusedIncludes: Strict
+
+CompileFlags:
+  CompilationDatabase: build
+  # Compiler: /opt/homebrew/opt/llvm@22/bin/clang++
+
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
+
+Hover:
+  ShowAKA: true

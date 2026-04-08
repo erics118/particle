@@ -1,0 +1,6 @@
+---
+Checks: >
+  readability-*,
+  cppcoreguidelines-*,
+  clang-analyzer-*,
+  bugprone-*
