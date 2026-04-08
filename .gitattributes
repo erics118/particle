@@ -1,0 +1,5 @@
+# vendored dependency
+third_party/** linguist-vendored
+
+# avoid noisy diffs
+third_party/** -diff
