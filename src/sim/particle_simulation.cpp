@@ -2,11 +2,75 @@ module;
 
 #include <algorithm>
 #include <cmath>
+#include <mdspan>
 #include <random>
 
 module sim.particle_simulation;
 
 namespace sim {
+
+// bins particles into grid cells based on their position
+void SpatialGrid::build(
+    std::span<const float> x,
+    std::span<const float> y,
+    float bounds_width,
+    float bounds_height,
+    float cell_size) noexcept {
+    cell_size_ = cell_size;
+    grid_w_ = std::max(1, static_cast<int>(std::ceil(bounds_width / cell_size)));
+    grid_h_ = std::max(1, static_cast<int>(std::ceil(bounds_height / cell_size)));
+
+    const int total_cells = grid_w_ * grid_h_;
+    const std::size_t n = x.size();
+
+    cell_counts_.assign(total_cells, 0u);
+    cell_starts_.resize(total_cells);
+    sorted_indices_.resize(n);
+    particle_cells_.resize(n);
+
+    // assign each particle to a cell and count particles per cell
+    for (std::size_t i = 0; i < n; ++i) {
+        const int cx = std::clamp(static_cast<int>(x[i] / cell_size_), 0, grid_w_ - 1);
+        const int cy = std::clamp(static_cast<int>(y[i] / cell_size_), 0, grid_h_ - 1);
+        const auto cell = cy * grid_w_ + cx;
+        particle_cells_[i] = cell;
+        ++cell_counts_[cell];
+    }
+
+    // exclusive prefix sum to get the start offset of each cell in sorted_indices_
+    std::uint32_t running = 0;
+
+    for (int c = 0; c < total_cells; ++c) {
+        cell_starts_[c] = running;
+        running += cell_counts_[c];
+    }
+
+    // scatter particles into sorted order using a copy of starts as write cursors
+    std::vector<std::uint32_t> write_at(cell_starts_);
+
+    for (std::size_t i = 0; i < n; ++i) {
+        sorted_indices_[write_at[particle_cells_[i]]++] = static_cast<std::uint32_t>(i);
+    }
+}
+
+// returns the indices of particles in the cell at (cx, cy)
+std::span<const std::uint32_t> SpatialGrid::cell_particles(int cx, int cy) const noexcept {
+    if (cx < 0 || cx >= grid_w_ || cy < 0 || cy >= grid_h_) {
+        return {};
+    }
+
+    // 2d view over the flat cell arrays for clean row,col indexing
+    const auto starts = std::mdspan(cell_starts_.data(), grid_h_, grid_w_);
+    const auto counts = std::mdspan(cell_counts_.data(), grid_h_, grid_w_);
+
+    return std::span{sorted_indices_}.subspan(starts[cy, cx], counts[cy, cx]);
+}
+
+int SpatialGrid::grid_w() const noexcept { return grid_w_; }
+
+int SpatialGrid::grid_h() const noexcept { return grid_h_; }
+
+float SpatialGrid::cell_size() const noexcept { return cell_size_; }
 
 namespace {
 
@@ -51,7 +115,10 @@ void initialize_particle_state(ParticleView particles, const SimulationConfig& c
 }
 
 // run once per simulation step to update particle positions and velocities
-void step_particles(ParticleView particles, const SimulationConfig& config, float dt) noexcept {
+void step_particles(ParticleView particles, const SimulationConfig& config, float dt, SpatialGrid& grid) noexcept {
+    // build grid from current positions before computing forces
+    grid.build(particles.x, particles.y, config.bounds_width, config.bounds_height, config.cell_size);
+
     const float center_x = config.bounds_width * 0.5f;
     const float center_y = config.bounds_height * 0.5f;
 
@@ -61,26 +128,63 @@ void step_particles(ParticleView particles, const SimulationConfig& config, floa
     // prevent sqrt in hot paths
     const float max_speed_squared = config.max_speed * config.max_speed;
 
+    // compare squared distances to avoid sqrt in the neighbor loop
+    const float interaction_radius_sq = config.interaction_radius * config.interaction_radius;
+
     for (std::size_t index = 0; index < particles.x.size(); ++index) {
+        // global gravity: inverse cube fallow from the center
         const float dx = center_x - particles.x[index];
         const float dy = center_y - particles.y[index];
-
         const float distance_squared = dx * dx + dy * dy + config.softening;
         const float inverse_distance = 1.0f / std::sqrt(distance_squared);
-        const float inverse_distance_cubed = inverse_distance * inverse_distance * inverse_distance;
+        const float falloff = inverse_distance * inverse_distance * inverse_distance;
 
-        // strength of acceleration, inverse_softening to prevent infinite acceleration
         const float gravity = config.attraction_strength * inverse_softening;
-
-        // force weakens with distance
-        const float falloff = inverse_distance_cubed;
 
         const float acceleration_scale = gravity * particles.mass[index] * falloff;
 
+        float ax = dx * acceleration_scale;
+        float ay = dy * acceleration_scale;
+
+        // local repulsion: linear falloff from neighbors within interaction_radius
+        // prevents particles from being too close to each other
+        const int cx = std::clamp(static_cast<int>(particles.x[index] / config.cell_size), 0, grid.grid_w() - 1);
+        const int cy = std::clamp(static_cast<int>(particles.y[index] / config.cell_size), 0, grid.grid_h() - 1);
+
+        // loop over the 3x3 neighborhood of cells
+        for (int ny = cy - 1; ny <= cy + 1; ++ny) {
+            for (int nx = cx - 1; nx <= cx + 1; ++nx) {
+                for (const auto j : grid.cell_particles(nx, ny)) {
+                    // if is the current particle, skip
+                    if (j == index) {
+                        continue;
+                    }
+
+                    const float rdx = particles.x[index] - particles.x[j];
+                    const float rdy = particles.y[index] - particles.y[j];
+                    const float dist_sq = rdx * rdx + rdy * rdy;
+
+                    // overlapping or too far away, so no force
+                    if (dist_sq == 0.0f || dist_sq >= interaction_radius_sq) {
+                        continue;
+                    }
+
+                    // linear falloff: full strength at contact, zero at interaction_radius
+                    const float dist = std::sqrt(dist_sq);
+                    const float overlap = 1.0f - dist / config.interaction_radius;
+                    const float force = config.repulsion_strength * overlap / dist;
+
+                    // apply the repulsion force away from the neighbor
+                    ax += rdx * force;
+                    ay += rdy * force;
+                }
+            }
+        }
+
         // set velocity to current velocity plus acceleration towards the center
         // with damping to prevent infinite acceleration
-        particles.vx[index] = (particles.vx[index] + dx * acceleration_scale * dt) * config.damping;
-        particles.vy[index] = (particles.vy[index] + dy * acceleration_scale * dt) * config.damping;
+        particles.vx[index] = (particles.vx[index] + ax * dt) * config.damping;
+        particles.vy[index] = (particles.vy[index] + ay * dt) * config.damping;
 
         // we compare with speed_squared to avoid a sqrt, as sqrt is expensive
         const float speed_squared =
@@ -176,7 +280,8 @@ void ParticleSimulation::step(float dt) noexcept {
         return;
     }
 
-    step_particles(storage_.view(), config_, dt);
+    SpatialGrid grid;
+    step_particles(storage_.view(), config_, dt, grid);
 }
 
 const SimulationConfig& ParticleSimulation::config() const noexcept {
