@@ -52,8 +52,21 @@ NS::SharedPtr<MTL::RenderPipelineState> create_pipeline_state(MTL::Device* devic
     // set color format
     color->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
 
+    // enable alpha blending for antialiased circle edges
+    // result = src.rgb * src.a + dst.rgb * (1 - src.a)
+    color->setBlendingEnabled(true);
+    color->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
+    color->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+    color->setSourceAlphaBlendFactor(MTL::BlendFactorSourceAlpha);
+    color->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+
     return NS::TransferPtr(device->newRenderPipelineState(pipeline_descriptor.get(), &error));
 }
+
+// this struct has to match ParticleUniforms in [particle_points.metal]
+struct ParticleUniforms {
+    float point_size;
+};
 
 // transform a single particle position from pixel coords to NDC
 PackedParticlePosition pixel_to_ndc(float px, float py, float width, float height) {
@@ -150,8 +163,11 @@ void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleVi
 
     std::memcpy(particle_buffer_->contents(), packed_positions_.data(), particle_data_size);
 
+    const ParticleUniforms uniforms{.point_size = particle_size_};
+
     encoder->setRenderPipelineState(pipeline_state_.get());
     encoder->setVertexBuffer(particle_buffer_.get(), 0, 0);
+    encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
     encoder->drawPrimitives(MTL::PrimitiveTypePoint, NS::UInteger{0}, static_cast<NS::UInteger>(packed_positions_.size()));
 
     encoder->endEncoding();

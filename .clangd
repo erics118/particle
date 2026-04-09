@@ -33,6 +33,7 @@ Diagnostics:
       - misc-use-internal-linkage
       - cppcoreguidelines-pro-bounds-pointer-arithmetic
       - cppcoreguidelines-pro-type-member-init
+      - performance-*
 
 
 # --- metal-lsp:begin ---

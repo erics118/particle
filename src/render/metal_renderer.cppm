@@ -33,6 +33,8 @@ class MetalRenderer {
     int width_{};
     int height_{};
 
+    float particle_size_ = 8.0f;
+
    public:
     MetalRenderer(MTL::Device* device);
 
