@@ -22,6 +22,18 @@ Index:
 Diagnostics:
   Suppress: "*"
 
+---
+If:
+  PathMatch: .*\.metal
+
+# remove certain pointer-related checks for metal files
+Diagnostics:
+  ClangTidy:
+    Remove:
+      - misc-use-internal-linkage
+      - cppcoreguidelines-pro-bounds-pointer-arithmetic
+      - cppcoreguidelines-pro-type-member-init
+
 
 # --- metal-lsp:begin ---
 ---

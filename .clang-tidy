@@ -4,8 +4,17 @@ Checks: >
   cppcoreguidelines-*,
   clang-analyzer-*,
   bugprone-*,
+  modernize-*,
+  performance-*,
+  misc-*,
+  portability-*,
   -bugprone-easily-swappable-parameters,
   -readability-math-missing-parentheses,
   -readability-uppercase-literal-suffix,
-  -readability-identifier-length
-ExcludeHeaderFilterRegex: "^third_party/"
+  -readability-identifier-length,
+  -modernize-use-trailing-return-type,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers
+
+ExcludeHeaderFilterRegex: "third_party/"

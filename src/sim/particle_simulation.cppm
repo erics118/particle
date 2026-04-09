@@ -46,6 +46,7 @@ class ParticleStorage {
     explicit ParticleStorage(std::size_t particle_count = 0);
 
     [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
     void resize(std::size_t particle_count);
 
     [[nodiscard]] ParticleView view() noexcept;

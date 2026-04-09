@@ -21,5 +21,5 @@ vertex VertexOutput particle_vertex(const device float2* positions [[buffer(0)]]
 
 fragment float4 particle_fragment() {
     // white
-    return float4(1.0, 1.0, 1.0, 1.0);
+    return {1.0, 1.0, 1.0, 1.0};
 }

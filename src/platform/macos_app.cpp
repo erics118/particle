@@ -120,7 +120,10 @@ class AppDelegate final : public NS::ApplicationDelegate {
         }
 
         // starting  position and size
-        const CGRect frame = {{0.0, 0.0}, {1280.0, 720.0}};
+        const CGRect frame{
+            .origin = {.x = 0.0, .y = 0.0},
+            .size = {.width = 1280.0, .height = 720.0},
+        };
 
         // style mask for the window
         const auto style_mask =

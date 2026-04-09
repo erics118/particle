@@ -29,9 +29,9 @@ class MetalRenderer {
 
     std::vector<PackedParticlePosition> packed_positions_;
 
-    double phase_;
-    int width_;
-    int height_;
+    double phase_{};
+    int width_{};
+    int height_{};
 
    public:
     MetalRenderer(MTL::Device* device);

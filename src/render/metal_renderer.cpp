@@ -4,6 +4,7 @@ module;
 #include <Metal/Metal.hpp>
 #include <cmath>
 #include <cstring>
+#include <ranges>
 
 module render.metal_renderer;
 
@@ -13,6 +14,7 @@ const MTL::ClearColor kBaseColor = {0.06, 0.08, 0.12, 1.0};
 
 namespace {
 
+// NOLINTNEXTLINE(*-avoid-c-arrays)
 constexpr char kShaderSource[] = {
 
 #embed "shaders/particle_points.metal"
@@ -53,16 +55,21 @@ NS::SharedPtr<MTL::RenderPipelineState> create_pipeline_state(MTL::Device* devic
     return NS::TransferPtr(device->newRenderPipelineState(pipeline_descriptor.get(), &error));
 }
 
+// transform a single particle position from pixel coords to NDC
+PackedParticlePosition pixel_to_ndc(float px, float py, float width, float height) {
+    return {
+        .x = (px / width) * 2.0f - 1.0f,
+        .y = 1.0f - (py / height) * 2.0f,
+    };
+}
+
 }  // namespace
 
 MetalRenderer::MetalRenderer(MTL::Device* device)
     : command_queue_(NS::TransferPtr(device->newCommandQueue())),
       device_(NS::RetainPtr(device)),
       pipeline_state_(create_pipeline_state(device)),
-      particle_buffer_(nullptr),
-      phase_(0.0),
-      width_(0),
-      height_(0) {}
+      particle_buffer_(nullptr) {}
 
 void MetalRenderer::resize(int width, int height) {
     width_ = width;
@@ -108,24 +115,24 @@ void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleVi
         });
     }
 
-    // transform pixel coords to NDC and interleave into packed buffer
+    const auto width = static_cast<float>(width_);
+    const auto height = static_cast<float>(height_);
+
     packed_positions_.resize(particles.x.size());
-    for (std::size_t index = 0; index < particles.x.size(); ++index) {
-        packed_positions_[index] = PackedParticlePosition{
-            .x = (particles.x[index] / static_cast<float>(width_)) * 2.0f - 1.0f,
-            .y = 1.0f - (particles.y[index] / static_cast<float>(height_)) * 2.0f,
-        };
+
+    for (const auto& [pos, px, py] : std::views::zip(packed_positions_, particles.x, particles.y)) {
+        pos = pixel_to_ndc(px, py, width, height);
     }
 
-    const std::size_t particle_data_size = packed_positions_.size() * sizeof(PackedParticlePosition);
-
     // no particles to draw
-    if (particle_data_size == 0) {
+    if (packed_positions_.empty()) {
         encoder->endEncoding();
         command_buffer->presentDrawable(frame_context.drawable);
         command_buffer->commit();
         return;
     }
+
+    const std::size_t particle_data_size = std::span{packed_positions_}.size_bytes();
 
     // only reallocate when the buffer is too small
     if (!particle_buffer_ || particle_buffer_->length() < particle_data_size) {

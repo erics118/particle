@@ -127,6 +127,10 @@ std::size_t ParticleStorage::size() const noexcept {
     return x_.size();
 }
 
+bool ParticleStorage::empty() const noexcept {
+    return x_.empty();
+}
+
 // resize the storage to the given number of particles
 void ParticleStorage::resize(std::size_t particle_count) {
     x_.resize(particle_count);
@@ -168,7 +172,7 @@ void ParticleSimulation::resize_bounds(float width, float height) noexcept {
 }
 
 void ParticleSimulation::step(float dt) noexcept {
-    if (dt <= 0.0f || storage_.size() == 0) {
+    if (dt <= 0.0f || storage_.empty()) {
         return;
     }
 
