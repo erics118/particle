@@ -3,5 +3,9 @@ Checks: >
   readability-*,
   cppcoreguidelines-*,
   clang-analyzer-*,
-  bugprone-*
-ExcludeHeaderFilterRegex: '^third_party/'
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -readability-math-missing-parentheses,
+  -readability-uppercase-literal-suffix,
+  -readability-identifier-length
+ExcludeHeaderFilterRegex: "^third_party/"

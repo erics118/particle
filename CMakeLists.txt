@@ -15,15 +15,20 @@ target_sources(${PROJECT_NAME}
     src/main.cpp
     src/platform/macos_app.cpp
     src/render/metal_renderer.cpp
+    src/sim/particle_simulation.cpp
     PRIVATE FILE_SET CXX_MODULES FILES
     src/platform/macos_app.cppm
     src/render/metal_renderer.cppm
+    src/sim/particle_simulation.cppm
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
     -Wall
     -Wextra
     -Wpedantic
+
+    # for #embed
+    -Wno-c23-extensions
 )
 
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE

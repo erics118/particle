@@ -1,5 +1,6 @@
 module;
 
+#include <chrono>
 #include <memory>
 
 // define macros to ensure that the selector and class symbols are linked
@@ -15,25 +16,38 @@ module;
 module platform.macos_app;
 
 import render.metal_renderer;
+import sim.particle_simulation;
 
 namespace platform {
 
 namespace {
 
+constexpr float kFixedTimeStep = 1.0f / 120.0f;
+constexpr float kMaxFrameDelta = 0.1f;  // caps delta to prevent spiral of death on slow frames
+constexpr int kMaxSimulationStepsPerFrame = 8;
+
 class ViewDelegate : public MTK::ViewDelegate {
    private:
+    using Clock = std::chrono::steady_clock;
+
     std::unique_ptr<render::MetalRenderer> renderer_;
+    sim::ParticleSimulation simulation_;
+    Clock::time_point last_frame_time_;
+    float accumulated_time_{};
 
    public:
-    ViewDelegate(MTL::Device* device, MTK::View* view) {
-        renderer_ = std::make_unique<render::MetalRenderer>(device);
-
+    ViewDelegate(MTL::Device* device, MTK::View* view)
+        : renderer_(std::make_unique<render::MetalRenderer>(device)),
+          simulation_(sim::SimulationConfig{}),
+          last_frame_time_(Clock::now()) {
         const CGSize drawable_size = view->drawableSize();
-        renderer_->resize(static_cast<int>(drawable_size.width),
-                          static_cast<int>(drawable_size.height));
+
+        renderer_->resize(static_cast<int>(drawable_size.width), static_cast<int>(drawable_size.height));
+
+        simulation_.resize_bounds(static_cast<float>(drawable_size.width), static_cast<float>(drawable_size.height));
     }
 
-    // actually render the frame
+    // render the frame
     void drawInMTKView(MTK::View* view) override {
         if (view == nullptr) {
             return;
@@ -51,12 +65,38 @@ class ViewDelegate : public MTK::ViewDelegate {
             .render_pass_descriptor = render_pass_descriptor.get(),
         };
 
-        renderer_->draw(frame_context);
+        tick_simulation();
+
+        renderer_->draw(frame_context, simulation_.particles());
     }
 
     // handle window resizing
     void drawableSizeWillChange(MTK::View* /* view */, CGSize size) override {
         renderer_->resize(static_cast<int>(size.width), static_cast<int>(size.height));
+        simulation_.resize_bounds(static_cast<float>(size.width),
+                                  static_cast<float>(size.height));
+    }
+
+   private:
+    void tick_simulation() {
+        const Clock::time_point now = Clock::now();
+        const std::chrono::duration<float> frame_delta = now - last_frame_time_;
+        last_frame_time_ = now;
+
+        accumulated_time_ += std::min(frame_delta.count(), kMaxFrameDelta);
+
+        int step_count = 0;
+
+        while (accumulated_time_ >= kFixedTimeStep && step_count < kMaxSimulationStepsPerFrame) {
+            simulation_.step(kFixedTimeStep);
+            accumulated_time_ -= kFixedTimeStep;
+            ++step_count;
+        }
+
+        // drop accumulated time if we hit the step cap to avoid catching up indefinitely
+        if (step_count == kMaxSimulationStepsPerFrame) {
+            accumulated_time_ = 0.0f;
+        }
     }
 };
 

@@ -2,8 +2,11 @@ module;
 
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
+#include <vector>
 
 export module render.metal_renderer;
+
+import sim.particle_simulation;
 
 export namespace render {
 
@@ -12,10 +15,19 @@ struct FrameContext {
     MTL::RenderPassDescriptor* render_pass_descriptor;
 };
 
+struct PackedParticlePosition {
+    float x;
+    float y;
+};
+
 class MetalRenderer {
    private:
     NS::SharedPtr<MTL::CommandQueue> command_queue_;
     NS::SharedPtr<MTL::Device> device_;
+    NS::SharedPtr<MTL::RenderPipelineState> pipeline_state_;
+    NS::SharedPtr<MTL::Buffer> particle_buffer_;
+
+    std::vector<PackedParticlePosition> packed_positions_;
 
     double phase_;
     int width_;
@@ -25,7 +37,7 @@ class MetalRenderer {
     MetalRenderer(MTL::Device* device);
 
     void resize(int width, int height);
-    void draw(const FrameContext& frame_context);
+    void draw(const FrameContext& frame_context, sim::ConstParticleView particles);
 };
 
 }  // namespace render

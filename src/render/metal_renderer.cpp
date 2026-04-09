@@ -3,6 +3,7 @@ module;
 #include <Foundation/Foundation.hpp>
 #include <Metal/Metal.hpp>
 #include <cmath>
+#include <cstring>
 
 module render.metal_renderer;
 
@@ -10,9 +11,55 @@ namespace render {
 
 const MTL::ClearColor kBaseColor = {0.06, 0.08, 0.12, 1.0};
 
+namespace {
+
+constexpr char kShaderSource[] = {
+
+#embed "shaders/particle_points.metal"
+
+    , 0};
+
+// compile embedded shader source and configure the render pipeline
+NS::SharedPtr<MTL::RenderPipelineState> create_pipeline_state(MTL::Device* device) {
+    NS::Error* error = nullptr;
+    NS::SharedPtr<NS::String> shader_source =
+        NS::TransferPtr(NS::String::alloc()->init(static_cast<const char*>(kShaderSource), NS::UTF8StringEncoding));
+
+    NS::SharedPtr<MTL::Library> library = NS::TransferPtr(device->newLibrary(shader_source.get(), nullptr, &error));
+
+    if (!library) {
+        return nullptr;
+    }
+
+    NS::SharedPtr<MTL::Function> vertex_function =
+        NS::TransferPtr(library->newFunction(NS::String::string("particle_vertex", NS::UTF8StringEncoding)));
+    NS::SharedPtr<MTL::Function> fragment_function =
+        NS::TransferPtr(library->newFunction(NS::String::string("particle_fragment", NS::UTF8StringEncoding)));
+
+    if (!vertex_function || !fragment_function) {
+        return nullptr;
+    }
+
+    NS::SharedPtr<MTL::RenderPipelineDescriptor> pipeline_descriptor = NS::TransferPtr(MTL::RenderPipelineDescriptor::alloc()->init());
+
+    pipeline_descriptor->setVertexFunction(vertex_function.get());
+    pipeline_descriptor->setFragmentFunction(fragment_function.get());
+
+    MTL::RenderPipelineColorAttachmentDescriptor* color = pipeline_descriptor->colorAttachments()->object(0);
+
+    // set color format
+    color->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+
+    return NS::TransferPtr(device->newRenderPipelineState(pipeline_descriptor.get(), &error));
+}
+
+}  // namespace
+
 MetalRenderer::MetalRenderer(MTL::Device* device)
     : command_queue_(NS::TransferPtr(device->newCommandQueue())),
       device_(NS::RetainPtr(device)),
+      pipeline_state_(create_pipeline_state(device)),
+      particle_buffer_(nullptr),
       phase_(0.0),
       width_(0),
       height_(0) {}
@@ -22,9 +69,10 @@ void MetalRenderer::resize(int width, int height) {
     height_ = height;
 }
 
-void MetalRenderer::draw(const FrameContext& frame_context) {
+void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleView particles) {
     if (frame_context.drawable == nullptr ||
         frame_context.render_pass_descriptor == nullptr ||
+        !pipeline_state_ ||
         !command_queue_) {
         return;
     }
@@ -59,6 +107,45 @@ void MetalRenderer::draw(const FrameContext& frame_context) {
             .zfar = 1.0,
         });
     }
+
+    // transform pixel coords to NDC and interleave into packed buffer
+    packed_positions_.resize(particles.x.size());
+    for (std::size_t index = 0; index < particles.x.size(); ++index) {
+        packed_positions_[index] = PackedParticlePosition{
+            .x = (particles.x[index] / static_cast<float>(width_)) * 2.0f - 1.0f,
+            .y = 1.0f - (particles.y[index] / static_cast<float>(height_)) * 2.0f,
+        };
+    }
+
+    const std::size_t particle_data_size = packed_positions_.size() * sizeof(PackedParticlePosition);
+
+    // no particles to draw
+    if (particle_data_size == 0) {
+        encoder->endEncoding();
+        command_buffer->presentDrawable(frame_context.drawable);
+        command_buffer->commit();
+        return;
+    }
+
+    // only reallocate when the buffer is too small
+    if (!particle_buffer_ || particle_buffer_->length() < particle_data_size) {
+        particle_buffer_ = NS::TransferPtr(device_->newBuffer(
+            particle_data_size,
+            MTL::ResourceStorageModeShared));
+
+        if (!particle_buffer_) {
+            encoder->endEncoding();
+            command_buffer->presentDrawable(frame_context.drawable);
+            command_buffer->commit();
+            return;
+        }
+    }
+
+    std::memcpy(particle_buffer_->contents(), packed_positions_.data(), particle_data_size);
+
+    encoder->setRenderPipelineState(pipeline_state_.get());
+    encoder->setVertexBuffer(particle_buffer_.get(), 0, 0);
+    encoder->drawPrimitives(MTL::PrimitiveTypePoint, NS::UInteger{0}, static_cast<NS::UInteger>(packed_positions_.size()));
 
     encoder->endEncoding();
     command_buffer->presentDrawable(frame_context.drawable);

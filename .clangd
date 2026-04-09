@@ -11,6 +11,7 @@ InlayHints:
 
 Hover:
   ShowAKA: true
+
 ---
 If:
   PathMatch: third_party/.*
@@ -19,4 +20,24 @@ Index:
   Background: Skip
 
 Diagnostics:
-  Suppress: '*'
+  Suppress: "*"
+
+
+# --- metal-lsp:begin ---
+---
+If:
+  PathMatch: .*\.metal
+
+CompileFlags:
+  Add:
+    - -xc++
+    - -std=c++17
+    - -Wno-unknown-attributes
+    - -Wno-reserved-user-defined-literal
+    - -isystem
+    - /Users/eric/.vscode/extensions/rayanhtt.metal-lsp-1.4.1-local/stubs
+    - -include
+    - /Users/eric/.vscode/extensions/rayanhtt.metal-lsp-1.4.1-local/headers/metal_compat.h
+    - -I
+    - /Users/eric/dev/particle
+# --- metal-lsp:end ---
