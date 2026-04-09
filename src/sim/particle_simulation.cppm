@@ -10,18 +10,18 @@ export module sim.particle_simulation;
 export namespace sim {
 
 struct SimulationConfig {
-    std::size_t particle_count = 1'000;
+    std::size_t particle_count = 10'000;
     float bounds_width = 1280.0f * 2;
     float bounds_height = 720.0f * 2;
-    float attraction_strength = 180.0f;
+    float attraction_strength = 400.0f;
     float softening = 50.0f;
     float damping = 0.997f;
     float max_speed = 400.0f;
 
     // for spacial grid
     // we must have cell_size >= interaction_radius, so a 3x3 search covers all neighbors
-    float cell_size = 60.0f;
-    float interaction_radius = 50.0f;
+    float cell_size = 50.0f;
+    float interaction_radius = 40.0f;
     float repulsion_strength = 600.0f;
 };
 
@@ -96,6 +96,7 @@ class ParticleSimulation {
 
     ParticleStorage storage_;
     SimulationConfig config_;
+    SpatialGrid grid_;  // persistent across steps to reuse vector allocations
 
    public:
     explicit ParticleSimulation(SimulationConfig config = {});

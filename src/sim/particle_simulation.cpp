@@ -86,7 +86,7 @@ void initialize_particle_state(ParticleView particles, const SimulationConfig& c
 
     const float cloud_radius = std::min(config.bounds_width, config.bounds_height) * 0.3f;
 
-    const float initial_speed = 100.0f;
+    const float initial_speed = 10.0f;
 
     std::mt19937 rng(kRandomSeed);
 
@@ -280,8 +280,7 @@ void ParticleSimulation::step(float dt) noexcept {
         return;
     }
 
-    SpatialGrid grid;
-    step_particles(storage_.view(), config_, dt, grid);
+    step_particles(storage_.view(), config_, dt, grid_);
 }
 
 const SimulationConfig& ParticleSimulation::config() const noexcept {

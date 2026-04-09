@@ -22,9 +22,9 @@ namespace platform {
 
 namespace {
 
-constexpr float kFixedTimeStep = 1.0f / 120.0f;
+constexpr float kFixedTimeStep = 1.0f / 60.0f;
 constexpr float kMaxFrameDelta = 0.1f;  // caps delta to prevent spiral of death on slow frames
-constexpr int kMaxSimulationStepsPerFrame = 8;
+constexpr int kMaxSimulationStepsPerFrame = 2;
 
 class ViewDelegate : public MTK::ViewDelegate {
    private:
