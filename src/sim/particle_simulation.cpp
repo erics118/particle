@@ -96,16 +96,16 @@ void initialize_particle_state(ParticleView particles, const SimulationConfig& c
     std::uniform_real_distribution<float> angle_distribution(0.0f, kTau);
     std::uniform_real_distribution<float> radius_distribution(0.0f, 1.0f);
     std::uniform_real_distribution<float> speed_distribution(-initial_speed, initial_speed);
-    std::uniform_real_distribution<float> mass_distribution(0.5f, 5.0f);
+    std::uniform_real_distribution<float> mass_distribution(0.5f, 3.0f);
 
-    // generate a random position, velocity, and mass for each particle
+    // generate a random position, velocity, mass, and radius for each particle
     for (std::size_t index = 0; index < particles.x.size(); ++index) {
         const float angle = angle_distribution(rng);
 
         // sqrt maps uniform [0,1] to uniform circle distribution
-        const float radius = std::sqrt(radius_distribution(rng)) * cloud_radius;
-        const float offset_x = std::cos(angle) * radius;
-        const float offset_y = std::sin(angle) * radius;
+        const float placement_radius = std::sqrt(radius_distribution(rng)) * cloud_radius;
+        const float offset_x = std::cos(angle) * placement_radius;
+        const float offset_y = std::sin(angle) * placement_radius;
 
         particles.x[index] = center_x + offset_x;
         particles.y[index] = center_y + offset_y;
@@ -114,6 +114,9 @@ void initialize_particle_state(ParticleView particles, const SimulationConfig& c
         particles.vy[index] = speed_distribution(rng);
 
         particles.mass[index] = mass_distribution(rng);
+
+        // radius directly proportional to mass
+        particles.radius[index] = mass_distribution(rng) * 2.0f;
     }
 }
 
@@ -174,15 +177,24 @@ void step_particles(
                         const float rdy = particles.y[index] - particles.y[j];
                         const float dist_sq = rdx * rdx + rdy * rdy;
 
-                        // overlapping or too far away, so no force
+                        // same position or too far away, so no force
                         if (dist_sq == 0.0f || dist_sq >= interaction_radius_sq) {
                             continue;
                         }
 
-                        // linear falloff: full strength at contact, zero at interaction_radius
                         const float dist = std::sqrt(dist_sq);
-                        const float overlap = 1.0f - dist / config.interaction_radius;
-                        const float force = config.repulsion_strength * overlap / dist;
+                        const float contact = particles.radius[index] + particles.radius[j];
+
+                        float force{};
+                        if (dist < contact) {
+                            // overlap: strong force proportional to penetration depth
+                            const float penetration = contact - dist;
+                            force = config.repulsion_strength * (1.0f + penetration / contact) / dist;
+                        } else {
+                            // soft repulsion: linear falloff from contact surface to interaction_radius
+                            const float t = (dist - contact) / (config.interaction_radius - contact);
+                            force = config.repulsion_strength * (1.0f - t) / dist;
+                        }
 
                         // apply the repulsion force away from the neighbor
                         fax += rdx * force;
@@ -223,20 +235,22 @@ void step_particles(
             particles.x[index] += particles.vx[index] * dt;
             particles.y[index] += particles.vy[index] * dt;
 
-            // if the particle goes out of bounds, reflect it back and reverse its velocity
-            if (particles.x[index] < 0.0f) {
-                particles.x[index] = 0.0f;
+            // reflect off bounds using the particle edge, not the center
+            const float r = particles.radius[index];
+
+            if (particles.x[index] < r) {
+                particles.x[index] = r;
                 particles.vx[index] = -particles.vx[index];
-            } else if (particles.x[index] > config.bounds_width) {
-                particles.x[index] = config.bounds_width;
+            } else if (particles.x[index] > config.bounds_width - r) {
+                particles.x[index] = config.bounds_width - r;
                 particles.vx[index] = -particles.vx[index];
             }
 
-            if (particles.y[index] < 0.0f) {
-                particles.y[index] = 0.0f;
+            if (particles.y[index] < r) {
+                particles.y[index] = r;
                 particles.vy[index] = -particles.vy[index];
-            } else if (particles.y[index] > config.bounds_height) {
-                particles.y[index] = config.bounds_height;
+            } else if (particles.y[index] > config.bounds_height - r) {
+                particles.y[index] = config.bounds_height - r;
                 particles.vy[index] = -particles.vy[index];
             }
         }
@@ -264,6 +278,7 @@ void ParticleStorage::resize(std::size_t particle_count) {
     vx_.resize(particle_count);
     vy_.resize(particle_count);
     mass_.resize(particle_count);
+    radius_.resize(particle_count);
 }
 
 ParticleView ParticleStorage::view() noexcept {
@@ -273,6 +288,7 @@ ParticleView ParticleStorage::view() noexcept {
         .vx = vx_,
         .vy = vy_,
         .mass = mass_,
+        .radius = radius_,
     };
 }
 
@@ -283,6 +299,7 @@ ConstParticleView ParticleStorage::view() const noexcept {
         .vx = vx_,
         .vy = vy_,
         .mass = mass_,
+        .radius = radius_,
     };
 }
 

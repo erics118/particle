@@ -15,9 +15,17 @@ struct FrameContext {
     MTL::RenderPassDescriptor* render_pass_descriptor;
 };
 
-struct PackedParticlePosition {
+// must match VertexIn in particle_points.metal
+struct PackedParticle {
     float x;
     float y;
+    float radius;
+};
+
+// must match ViewportUniforms in particle_points.metal
+struct ViewportUniforms {
+    float width;
+    float height;
 };
 
 class MetalRenderer {
@@ -27,13 +35,11 @@ class MetalRenderer {
     NS::SharedPtr<MTL::RenderPipelineState> pipeline_state_;
     NS::SharedPtr<MTL::Buffer> particle_buffer_;
 
-    std::vector<PackedParticlePosition> packed_positions_;
+    std::vector<PackedParticle> packed_particles_;
 
     double phase_{};
     int width_{};
     int height_{};
-
-    float particle_size_ = 4.0f;
 
    public:
     MetalRenderer(MTL::Device* device);

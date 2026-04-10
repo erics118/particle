@@ -31,6 +31,7 @@ struct ParticleView {
     std::span<float> vx;
     std::span<float> vy;
     std::span<float> mass;
+    std::span<float> radius;
 };
 
 struct ConstParticleView {
@@ -39,6 +40,7 @@ struct ConstParticleView {
     std::span<const float> vx;
     std::span<const float> vy;
     std::span<const float> mass;
+    std::span<const float> radius;
 };
 
 class ParticleStorage {
@@ -48,6 +50,7 @@ class ParticleStorage {
     std::vector<float> vx_;
     std::vector<float> vy_;
     std::vector<float> mass_;
+    std::vector<float> radius_;
 
    public:
     explicit ParticleStorage(std::size_t particle_count = 0);

@@ -2,9 +2,16 @@
 
 using namespace metal;
 
-// must match ParticleUniforms in metal_renderer.cpp
-struct ParticleUniforms {
-    float point_size;
+// must match PackedParticle in metal_renderer.cppm
+struct VertexIn {
+    float2 position;  // world-space (pixels)
+    float radius;     // world-space radius (pixels)
+};
+
+// must match ViewportUniforms in metal_renderer.cppm
+struct ViewportUniforms {
+    float width;
+    float height;
 };
 
 struct VertexOutput {
@@ -13,16 +20,18 @@ struct VertexOutput {
 };
 
 vertex VertexOutput particle_vertex(
-    const device float2* positions [[buffer(0)]],
-    constant ParticleUniforms& uniforms [[buffer(1)]],
+    const device VertexIn* vertices [[buffer(0)]],
+    constant ViewportUniforms& viewport [[buffer(1)]],
     uint vertex_id [[vertex_id]]) {
+    const VertexIn v = vertices[vertex_id];
+
+    // convert world-space pixel coords to NDC
+    const float ndc_x = (v.position.x / viewport.width) * 2.0 - 1.0;
+    const float ndc_y = 1.0 - (v.position.y / viewport.height) * 2.0;
+
     VertexOutput output;
-
-    // x,y = position provided, z = 0, w = 1
-    output.position = float4(positions[vertex_id], 0.0, 1.0);
-
-    // diameter
-    output.point_size = uniforms.point_size;
+    output.position = float4(ndc_x, ndc_y, 0.0, 1.0);
+    output.point_size = v.radius * 2.0;  // diameter in drawable pixels
 
     return output;
 }

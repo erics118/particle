@@ -4,7 +4,6 @@ module;
 #include <Metal/Metal.hpp>
 #include <cmath>
 #include <cstring>
-#include <ranges>
 
 module render.metal_renderer;
 
@@ -63,19 +62,6 @@ NS::SharedPtr<MTL::RenderPipelineState> create_pipeline_state(MTL::Device* devic
     return NS::TransferPtr(device->newRenderPipelineState(pipeline_descriptor.get(), &error));
 }
 
-// this struct has to match ParticleUniforms in [particle_points.metal]
-struct ParticleUniforms {
-    float point_size;
-};
-
-// transform a single particle position from pixel coords to NDC
-PackedParticlePosition pixel_to_ndc(float px, float py, float width, float height) {
-    return {
-        .x = (px / width) * 2.0f - 1.0f,
-        .y = 1.0f - (py / height) * 2.0f,
-    };
-}
-
 }  // namespace
 
 MetalRenderer::MetalRenderer(MTL::Device* device)
@@ -131,21 +117,25 @@ void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleVi
     const auto width = static_cast<float>(width_);
     const auto height = static_cast<float>(height_);
 
-    packed_positions_.resize(particles.x.size());
+    packed_particles_.resize(particles.x.size());
 
-    for (const auto& [pos, px, py] : std::views::zip(packed_positions_, particles.x, particles.y)) {
-        pos = pixel_to_ndc(px, py, width, height);
+    for (std::size_t i = 0; i < packed_particles_.size(); ++i) {
+        packed_particles_[i] = PackedParticle{
+            .x = particles.x[i],
+            .y = particles.y[i],
+            .radius = particles.radius[i],
+        };
     }
 
     // no particles to draw
-    if (packed_positions_.empty()) {
+    if (packed_particles_.empty()) {
         encoder->endEncoding();
         command_buffer->presentDrawable(frame_context.drawable);
         command_buffer->commit();
         return;
     }
 
-    const std::size_t particle_data_size = std::span{packed_positions_}.size_bytes();
+    const std::size_t particle_data_size = std::span{packed_particles_}.size_bytes();
 
     // only reallocate when the buffer is too small
     if (!particle_buffer_ || particle_buffer_->length() < particle_data_size) {
@@ -161,14 +151,14 @@ void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleVi
         }
     }
 
-    std::memcpy(particle_buffer_->contents(), packed_positions_.data(), particle_data_size);
+    std::memcpy(particle_buffer_->contents(), packed_particles_.data(), particle_data_size);
 
-    const ParticleUniforms uniforms{.point_size = particle_size_};
+    const ViewportUniforms uniforms{.width = width, .height = height};
 
     encoder->setRenderPipelineState(pipeline_state_.get());
     encoder->setVertexBuffer(particle_buffer_.get(), 0, 0);
     encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
-    encoder->drawPrimitives(MTL::PrimitiveTypePoint, NS::UInteger{0}, static_cast<NS::UInteger>(packed_positions_.size()));
+    encoder->drawPrimitives(MTL::PrimitiveTypePoint, NS::UInteger{0}, static_cast<NS::UInteger>(packed_particles_.size()));
 
     encoder->endEncoding();
     command_buffer->presentDrawable(frame_context.drawable);
