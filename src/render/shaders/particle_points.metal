@@ -3,9 +3,11 @@
 using namespace metal;
 
 // must match PackedParticle in metal_renderer.cppm
+// note: float2 has alignment 8, making sizeof = 16; use separate floats to match C++ stride of 12
 struct VertexIn {
-    float2 position;  // world-space (pixels)
-    float radius;     // world-space radius (pixels)
+    float x;       // world-space x position (pixels)
+    float y;       // world-space y position (pixels)
+    float radius;  // world-space radius (pixels)
 };
 
 // must match ViewportUniforms in metal_renderer.cppm
@@ -26,8 +28,8 @@ vertex VertexOutput particle_vertex(
     const VertexIn v = vertices[vertex_id];
 
     // convert world-space pixel coords to NDC
-    const float ndc_x = (v.position.x / viewport.width) * 2.0 - 1.0;
-    const float ndc_y = 1.0 - (v.position.y / viewport.height) * 2.0;
+    const float ndc_x = (v.x / viewport.width) * 2.0 - 1.0;
+    const float ndc_y = 1.0 - (v.y / viewport.height) * 2.0;
 
     VertexOutput output;
     output.position = float4(ndc_x, ndc_y, 0.0, 1.0);
