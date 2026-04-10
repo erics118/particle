@@ -1,5 +1,8 @@
 module;
 
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+
 #include <algorithm>
 #include <cmath>
 #include <mdspan>
@@ -115,7 +118,13 @@ void initialize_particle_state(ParticleView particles, const SimulationConfig& c
 }
 
 // run once per simulation step to update particle positions and velocities
-void step_particles(ParticleView particles, const SimulationConfig& config, float dt, SpatialGrid& grid) noexcept {
+void step_particles(
+    ParticleView particles,
+    const SimulationConfig& config,
+    float dt,
+    SpatialGrid& grid,
+    std::span<float> ax,
+    std::span<float> ay) noexcept {
     // build grid from current positions before computing forces
     grid.build(particles.x, particles.y, config.bounds_width, config.bounds_height, config.cell_size);
 
@@ -125,100 +134,113 @@ void step_particles(ParticleView particles, const SimulationConfig& config, floa
     // prevent division by zero, and create infinite force at zero distance
     const float inverse_softening = 1.0f / config.softening;
 
-    // prevent sqrt in hot paths
-    const float max_speed_squared = config.max_speed * config.max_speed;
-
     // compare squared distances to avoid sqrt in the neighbor loop
     const float interaction_radius_sq = config.interaction_radius * config.interaction_radius;
 
-    for (std::size_t index = 0; index < particles.x.size(); ++index) {
-        // global gravity: inverse cube fallow from the center
-        const float dx = center_x - particles.x[index];
-        const float dy = center_y - particles.y[index];
-        const float distance_squared = dx * dx + dy * dy + config.softening;
-        const float inverse_distance = 1.0f / std::sqrt(distance_squared);
-        const float falloff = inverse_distance * inverse_distance * inverse_distance;
+    const std::size_t n = particles.x.size();
 
-        const float gravity = config.attraction_strength * inverse_softening;
+    // first pass: only compute forces for all particles in parallel
+    // reads only from positions, writes only to ax/ay
+    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, n), [&](const tbb::blocked_range<std::size_t>& range) {
+        for (std::size_t index = range.begin(); index != range.end(); ++index) {
+            // global gravity: inverse cube falloff from the center
+            const float dx = center_x - particles.x[index];
+            const float dy = center_y - particles.y[index];
+            const float distance_squared = dx * dx + dy * dy + config.softening;
+            const float inverse_distance = 1.0f / std::sqrt(distance_squared);
+            const float falloff = inverse_distance * inverse_distance * inverse_distance;
 
-        const float acceleration_scale = gravity * particles.mass[index] * falloff;
+            const float gravity = config.attraction_strength * inverse_softening;
+            const float acceleration_scale = gravity * particles.mass[index] * falloff;
 
-        float ax = dx * acceleration_scale;
-        float ay = dy * acceleration_scale;
+            float fax = dx * acceleration_scale;
+            float fay = dy * acceleration_scale;
 
-        // local repulsion: linear falloff from neighbors within interaction_radius
-        // prevents particles from being too close to each other
-        const int cx = std::clamp(static_cast<int>(particles.x[index] / config.cell_size), 0, grid.grid_w() - 1);
-        const int cy = std::clamp(static_cast<int>(particles.y[index] / config.cell_size), 0, grid.grid_h() - 1);
+            // local repulsion: linear falloff from neighbors within interaction_radius
+            // prevents particles from being too close to each other
+            const int cx = std::clamp(static_cast<int>(particles.x[index] / config.cell_size), 0, grid.grid_w() - 1);
+            const int cy = std::clamp(static_cast<int>(particles.y[index] / config.cell_size), 0, grid.grid_h() - 1);
 
-        // loop over the 3x3 neighborhood of cells
-        for (int ny = cy - 1; ny <= cy + 1; ++ny) {
-            for (int nx = cx - 1; nx <= cx + 1; ++nx) {
-                for (const auto j : grid.cell_particles(nx, ny)) {
-                    // if is the current particle, skip
-                    if (j == index) {
-                        continue;
+            // loop over the 3x3 neighborhood of cells
+            for (int ny = cy - 1; ny <= cy + 1; ++ny) {
+                for (int nx = cx - 1; nx <= cx + 1; ++nx) {
+                    for (const auto j : grid.cell_particles(nx, ny)) {
+                        // if is the current particle, skip
+                        if (j == index) {
+                            continue;
+                        }
+
+                        const float rdx = particles.x[index] - particles.x[j];
+                        const float rdy = particles.y[index] - particles.y[j];
+                        const float dist_sq = rdx * rdx + rdy * rdy;
+
+                        // overlapping or too far away, so no force
+                        if (dist_sq == 0.0f || dist_sq >= interaction_radius_sq) {
+                            continue;
+                        }
+
+                        // linear falloff: full strength at contact, zero at interaction_radius
+                        const float dist = std::sqrt(dist_sq);
+                        const float overlap = 1.0f - dist / config.interaction_radius;
+                        const float force = config.repulsion_strength * overlap / dist;
+
+                        // apply the repulsion force away from the neighbor
+                        fax += rdx * force;
+                        fay += rdy * force;
                     }
-
-                    const float rdx = particles.x[index] - particles.x[j];
-                    const float rdy = particles.y[index] - particles.y[j];
-                    const float dist_sq = rdx * rdx + rdy * rdy;
-
-                    // overlapping or too far away, so no force
-                    if (dist_sq == 0.0f || dist_sq >= interaction_radius_sq) {
-                        continue;
-                    }
-
-                    // linear falloff: full strength at contact, zero at interaction_radius
-                    const float dist = std::sqrt(dist_sq);
-                    const float overlap = 1.0f - dist / config.interaction_radius;
-                    const float force = config.repulsion_strength * overlap / dist;
-
-                    // apply the repulsion force away from the neighbor
-                    ax += rdx * force;
-                    ay += rdy * force;
                 }
             }
+
+            ax[index] = fax;
+            ay[index] = fay;
         }
+    });
 
-        // set velocity to current velocity plus acceleration towards the center
-        // with damping to prevent infinite acceleration
-        particles.vx[index] = (particles.vx[index] + ax * dt) * config.damping;
-        particles.vy[index] = (particles.vy[index] + ay * dt) * config.damping;
+    // second pass: integrate velocities and positions in parallel
+    // read from ax/ay, write to vx/vy/x/y per-particle
+    const float max_speed_squared = config.max_speed * config.max_speed;
 
-        // we compare with speed_squared to avoid a sqrt, as sqrt is expensive
-        const float speed_squared =
-            particles.vx[index] * particles.vx[index] +
-            particles.vy[index] * particles.vy[index];
+    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, n), [&](const tbb::blocked_range<std::size_t>& range) {
+        for (std::size_t index = range.begin(); index != range.end(); ++index) {
+            // set velocity to current velocity plus acceleration towards the center
+            // with damping to prevent infinite acceleration
+            particles.vx[index] = (particles.vx[index] + ax[index] * dt) * config.damping;
+            particles.vy[index] = (particles.vy[index] + ay[index] * dt) * config.damping;
 
-        // if speed is above max, we scale it down
-        if (speed_squared > max_speed_squared) {
-            const float speed_scale = config.max_speed / std::sqrt(speed_squared);
-            particles.vx[index] *= speed_scale;
-            particles.vy[index] *= speed_scale;
+            // we compare with speed_squared to avoid a sqrt, as sqrt is expensive
+            const float speed_squared =
+                particles.vx[index] * particles.vx[index] +
+                particles.vy[index] * particles.vy[index];
+
+            // if speed is above max, we scale it down
+            if (speed_squared > max_speed_squared) {
+                const float speed_scale = config.max_speed / std::sqrt(speed_squared);
+                particles.vx[index] *= speed_scale;
+                particles.vy[index] *= speed_scale;
+            }
+
+            // update the position based on the velocity
+            particles.x[index] += particles.vx[index] * dt;
+            particles.y[index] += particles.vy[index] * dt;
+
+            // if the particle goes out of bounds, reflect it back and reverse its velocity
+            if (particles.x[index] < 0.0f) {
+                particles.x[index] = 0.0f;
+                particles.vx[index] = -particles.vx[index];
+            } else if (particles.x[index] > config.bounds_width) {
+                particles.x[index] = config.bounds_width;
+                particles.vx[index] = -particles.vx[index];
+            }
+
+            if (particles.y[index] < 0.0f) {
+                particles.y[index] = 0.0f;
+                particles.vy[index] = -particles.vy[index];
+            } else if (particles.y[index] > config.bounds_height) {
+                particles.y[index] = config.bounds_height;
+                particles.vy[index] = -particles.vy[index];
+            }
         }
-
-        // update the position based on the velocity
-        particles.x[index] += particles.vx[index] * dt;
-        particles.y[index] += particles.vy[index] * dt;
-
-        // if the particle goes out of bounds, reflect it back and reverse its velocity
-        if (particles.x[index] < 0.0f) {
-            particles.x[index] = 0.0f;
-            particles.vx[index] = -particles.vx[index];
-        } else if (particles.x[index] > config.bounds_width) {
-            particles.x[index] = config.bounds_width;
-            particles.vx[index] = -particles.vx[index];
-        }
-
-        if (particles.y[index] < 0.0f) {
-            particles.y[index] = 0.0f;
-            particles.vy[index] = -particles.vy[index];
-        } else if (particles.y[index] > config.bounds_height) {
-            particles.y[index] = config.bounds_height;
-            particles.vy[index] = -particles.vy[index];
-        }
-    }
+    });
 }
 
 }  // namespace
@@ -266,7 +288,9 @@ ConstParticleView ParticleStorage::view() const noexcept {
 
 ParticleSimulation::ParticleSimulation(SimulationConfig config)
     : storage_(config.particle_count),
-      config_(config) {
+      config_(config),
+      ax_(config.particle_count, 0.0f),
+      ay_(config.particle_count, 0.0f) {
     initialize_particles();
 }
 
@@ -280,7 +304,7 @@ void ParticleSimulation::step(float dt) noexcept {
         return;
     }
 
-    step_particles(storage_.view(), config_, dt, grid_);
+    step_particles(storage_.view(), config_, dt, grid_, ax_, ay_);
 }
 
 const SimulationConfig& ParticleSimulation::config() const noexcept {

@@ -22,6 +22,8 @@ target_sources(${PROJECT_NAME}
     src/sim/particle_simulation.cppm
 )
 
+find_package(TBB REQUIRED)
+
 target_compile_options(${PROJECT_NAME} PRIVATE
     -Wall
     -Wextra
@@ -37,6 +39,7 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+    TBB::tbb
     "-framework AppKit"
     "-framework Foundation"
     "-framework Metal"

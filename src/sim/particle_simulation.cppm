@@ -98,6 +98,11 @@ class ParticleSimulation {
     SimulationConfig config_;
     SpatialGrid grid_;  // persistent across steps to reuse vector allocations
 
+    // force accumulators: written in force pass, read in integration pass
+    // kept here to reuse allocations across frames
+    std::vector<float> ax_;
+    std::vector<float> ay_;
+
    public:
     explicit ParticleSimulation(SimulationConfig config = {});
 
