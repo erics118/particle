@@ -3,26 +3,38 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 export module sim.particle_simulation;
 
 export namespace sim {
 
+// an undirected edge between two particle indices
+using Edge = std::pair<std::uint32_t, std::uint32_t>;
+
 struct SimulationConfig {
-    std::size_t particle_count = 10'000;
+    std::size_t particle_count = 55;
     float bounds_width = 1280.0f * 2;
     float bounds_height = 720.0f * 2;
-    float attraction_strength = 400.0f;
-    float softening = 50.0f;
-    float damping = 0.997f;
-    float max_speed = 400.0f;
 
-    // for spacial grid
-    // we must have cell_size >= interaction_radius, so a 3x3 search covers all neighbors
-    float cell_size = 50.0f;
-    float interaction_radius = 40.0f;
-    float repulsion_strength = 600.0f;
+    // unified 1/r^2 pairwise force
+    // positive = attractive (gravity)
+    // negative = repulsive (coulomb)
+    float force_strength = -50000.0f;
+
+    // prevents excessive forces at close distances
+    float softening = 1000.0f;
+
+    // spring attraction along graph edges
+    float spring_strength = 0.9f;
+    float spring_rest_length = 0.0f;
+
+    float damping = 0.97f;
+    float max_speed = 900.0f;
+
+    // for spatial grid: cell_size >= interaction_radius, so a 3x3 search covers all neighbors
+    float cell_size = 500.0f;
 };
 
 struct ParticleView {
@@ -106,6 +118,8 @@ class ParticleSimulation {
     std::vector<float> ax_;
     std::vector<float> ay_;
 
+    std::vector<Edge> edges_;
+
    public:
     explicit ParticleSimulation(SimulationConfig config = {});
 
@@ -114,6 +128,7 @@ class ParticleSimulation {
 
     [[nodiscard]] const SimulationConfig& config() const noexcept;
     [[nodiscard]] ConstParticleView particles() const noexcept;
+    [[nodiscard]] std::span<const Edge> edges() const noexcept;
 };
 
 }  // namespace sim

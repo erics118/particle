@@ -20,17 +20,18 @@ constexpr char kShaderSource[] = {
 
     , 0};
 
-// compile embedded shader source and configure the render pipeline
-NS::SharedPtr<MTL::RenderPipelineState> create_pipeline_state(MTL::Device* device) {
+// compile the embedded shader source into a reusable library
+NS::SharedPtr<MTL::Library> compile_library(MTL::Device* device) {
     NS::Error* error = nullptr;
     NS::SharedPtr<NS::String> shader_source =
         NS::TransferPtr(NS::String::alloc()->init(static_cast<const char*>(kShaderSource), NS::UTF8StringEncoding));
 
-    NS::SharedPtr<MTL::Library> library = NS::TransferPtr(device->newLibrary(shader_source.get(), nullptr, &error));
+    return NS::TransferPtr(device->newLibrary(shader_source.get(), nullptr, &error));
+}
 
-    if (!library) {
-        return nullptr;
-    }
+// configure the render pipeline for drawing particles as points
+NS::SharedPtr<MTL::RenderPipelineState> create_particle_pipeline(MTL::Library* library, MTL::Device* device) {
+    NS::Error* error = nullptr;
 
     NS::SharedPtr<MTL::Function> vertex_function =
         NS::TransferPtr(library->newFunction(NS::String::string("particle_vertex", NS::UTF8StringEncoding)));
@@ -62,20 +63,54 @@ NS::SharedPtr<MTL::RenderPipelineState> create_pipeline_state(MTL::Device* devic
     return NS::TransferPtr(device->newRenderPipelineState(pipeline_descriptor.get(), &error));
 }
 
+// configure the render pipeline for drawing graph edges as lines
+NS::SharedPtr<MTL::RenderPipelineState> create_edge_pipeline(MTL::Library* library, MTL::Device* device) {
+    NS::Error* error = nullptr;
+
+    NS::SharedPtr<MTL::Function> vertex_function =
+        NS::TransferPtr(library->newFunction(NS::String::string("edge_vertex", NS::UTF8StringEncoding)));
+
+    NS::SharedPtr<MTL::Function> fragment_function =
+        NS::TransferPtr(library->newFunction(NS::String::string("edge_fragment", NS::UTF8StringEncoding)));
+
+    if (!vertex_function || !fragment_function) {
+        return nullptr;
+    }
+
+    NS::SharedPtr<MTL::RenderPipelineDescriptor> pipeline_descriptor = NS::TransferPtr(MTL::RenderPipelineDescriptor::alloc()->init());
+    pipeline_descriptor->setVertexFunction(vertex_function.get());
+    pipeline_descriptor->setFragmentFunction(fragment_function.get());
+
+    MTL::RenderPipelineColorAttachmentDescriptor* color = pipeline_descriptor->colorAttachments()->object(0);
+    color->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+
+    // same alpha blending as particles so edges composite correctly
+    color->setBlendingEnabled(true);
+    color->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
+    color->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+    color->setSourceAlphaBlendFactor(MTL::BlendFactorSourceAlpha);
+    color->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+
+    return NS::TransferPtr(device->newRenderPipelineState(pipeline_descriptor.get(), &error));
+}
+
 }  // namespace
 
 MetalRenderer::MetalRenderer(MTL::Device* device)
     : command_queue_(NS::TransferPtr(device->newCommandQueue())),
       device_(NS::RetainPtr(device)),
-      pipeline_state_(create_pipeline_state(device)),
-      particle_buffer_(nullptr) {}
+      library_(compile_library(device)),
+      pipeline_state_(library_ ? create_particle_pipeline(library_.get(), device) : nullptr),
+      edge_pipeline_state_(library_ ? create_edge_pipeline(library_.get(), device) : nullptr),
+      particle_buffer_(nullptr),
+      edge_buffer_(nullptr) {}
 
 void MetalRenderer::resize(int width, int height) {
     width_ = width;
     height_ = height;
 }
 
-void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleView particles) {
+void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleView particles, std::span<const sim::Edge> edges) {
     if (frame_context.drawable == nullptr ||
         frame_context.render_pass_descriptor == nullptr ||
         !pipeline_state_ ||
@@ -116,6 +151,37 @@ void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleVi
 
     const auto width = static_cast<float>(width_);
     const auto height = static_cast<float>(height_);
+    const ViewportUniforms uniforms{.width = width, .height = height};
+
+    // draw edges first so particles render on top
+    if (!edges.empty() && edge_pipeline_state_) {
+        packed_edge_vertices_.clear();
+        packed_edge_vertices_.reserve(edges.size() * 2);
+
+        for (const auto& [a, b] : edges) {
+            packed_edge_vertices_.push_back({particles.x[a], particles.y[a]});
+            packed_edge_vertices_.push_back({particles.x[b], particles.y[b]});
+        }
+
+        const std::size_t edge_data_size = packed_edge_vertices_.size() * sizeof(PackedEdgeVertex);
+
+        // only reallocate when the buffer is too small
+        if (!edge_buffer_ || edge_buffer_->length() < edge_data_size) {
+            edge_buffer_ = NS::TransferPtr(device_->newBuffer(
+                edge_data_size,
+                MTL::ResourceStorageModeShared));
+        }
+
+        if (edge_buffer_) {
+            std::memcpy(edge_buffer_->contents(), packed_edge_vertices_.data(), edge_data_size);
+
+            encoder->setRenderPipelineState(edge_pipeline_state_.get());
+            encoder->setVertexBuffer(edge_buffer_.get(), 0, 0);
+            encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
+            // each pair of consecutive vertices forms one line segment
+            encoder->drawPrimitives(MTL::PrimitiveTypeLine, NS::UInteger{0}, static_cast<NS::UInteger>(packed_edge_vertices_.size()));
+        }
+    }
 
     packed_particles_.resize(particles.x.size());
 
@@ -152,8 +218,6 @@ void MetalRenderer::draw(const FrameContext& frame_context, sim::ConstParticleVi
     }
 
     std::memcpy(particle_buffer_->contents(), packed_particles_.data(), particle_data_size);
-
-    const ViewportUniforms uniforms{.width = width, .height = height};
 
     encoder->setRenderPipelineState(pipeline_state_.get());
     encoder->setVertexBuffer(particle_buffer_.get(), 0, 0);

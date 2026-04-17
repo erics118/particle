@@ -67,7 +67,7 @@ class ViewDelegate : public MTK::ViewDelegate {
 
         tick_simulation();
 
-        renderer_->draw(frame_context, simulation_.particles());
+        renderer_->draw(frame_context, simulation_.particles(), simulation_.edges());
     }
 
     // handle window resizing

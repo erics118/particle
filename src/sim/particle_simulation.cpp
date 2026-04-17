@@ -4,9 +4,10 @@ module;
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <mdspan>
-#include <random>
+#include <span>
 
 module sim.particle_simulation;
 
@@ -77,46 +78,169 @@ float SpatialGrid::cell_size() const noexcept { return cell_size_; }
 
 namespace {
 
-constexpr float kTau = 6.28318530717958647692f;
+struct NodePos {
+    float x, y;
+};
 
-// seed for deterministic RNG
-constexpr std::uint32_t kRandomSeed = 0xBEEFEDu;
+constexpr std::array<NodePos, 55> kPositions = {{
+    {1000, 650},
+    {930, 600},
+    {940, 715},
+    {1060, 720},
+    {1080, 600},
+    {1050, 668},
+    {968, 672},
+    {1000, 582},
+    {1042, 730},
+    {1068, 558},
+    {840, 525},
+    {718, 443},
+    {608, 368},
+    {508, 303},
+    {418, 248},
+    {1178, 565},
+    {1328, 530},
+    {1488, 500},
+    {1645, 476},
+    {1795, 460},
+    {1945, 448},
+    {918, 800},
+    {848, 933},
+    {798, 1053},
+    {768, 1163},
+    {746, 1263},
+    {733, 1348},
+    {726, 1403},
+    {898, 1073},
+    {993, 1103},
+    {553, 298},
+    {633, 288},
+    {673, 343},
+    {643, 423},
+    {1478, 420},
+    {1548, 435},
+    {1578, 503},
+    {1543, 568},
+    {1468, 573},
+    {648, 1408},
+    {633, 1373},
+    {668, 1428},
+    {728, 1428},
+    {792, 1418},
+    {818, 1391},
+    {373, 1018},
+    {303, 958},
+    {288, 1038},
+    {323, 1103},
+    {393, 1118},
+    {1660, 406},
+    {1725, 416},
+    {1745, 486},
+    {1685, 526},
+    {358, 203},
+}};
+
+constexpr std::array<Edge, 86> kEdges = {{
+    {0, 1},
+    {0, 2},
+    {0, 3},
+    {0, 4},
+    {0, 5},
+    {0, 6},
+    {0, 7},
+    {0, 8},
+    {0, 9},
+    {1, 2},
+    {2, 3},
+    {3, 4},
+    {4, 5},
+    {5, 6},
+    {6, 7},
+    {7, 8},
+    {8, 9},
+    {9, 1},
+    {1, 6},
+    {2, 5},
+    {3, 9},
+    {4, 8},
+    {1, 10},
+    {7, 10},
+    {10, 11},
+    {11, 12},
+    {12, 13},
+    {13, 14},
+    {12, 30},
+    {12, 31},
+    {12, 32},
+    {12, 33},
+    {13, 30},
+    {13, 31},
+    {11, 33},
+    {14, 54},
+    {4, 15},
+    {9, 15},
+    {15, 16},
+    {16, 17},
+    {17, 18},
+    {18, 19},
+    {19, 20},
+    {17, 34},
+    {17, 35},
+    {17, 36},
+    {17, 37},
+    {17, 38},
+    {18, 36},
+    {18, 37},
+    {16, 35},
+    {18, 50},
+    {19, 50},
+    {50, 51},
+    {51, 52},
+    {52, 53},
+    {53, 50},
+    {20, 52},
+    {2, 21},
+    {6, 21},
+    {21, 22},
+    {22, 23},
+    {23, 24},
+    {24, 25},
+    {25, 26},
+    {26, 27},
+    {22, 28},
+    {23, 28},
+    {28, 29},
+    {27, 39},
+    {27, 40},
+    {27, 41},
+    {27, 42},
+    {27, 43},
+    {27, 44},
+    {26, 44},
+    {25, 39},
+    {24, 45},
+    {29, 45},
+    {45, 46},
+    {45, 47},
+    {45, 48},
+    {45, 49},
+    {10, 21},
+    {16, 22},
+    {16, 23},
+}};
 
 // initialize the state of the particles
-void initialize_particle_state(ParticleView particles, const SimulationConfig& config) noexcept {
-    const float center_x = config.bounds_width * 0.5f;
-    const float center_y = config.bounds_height * 0.5f;
+void initialize_particle_state(ParticleView particles) noexcept {
+    const float mass = 1.0f;
+    const float radius = 6.0f;
 
-    const float cloud_radius = std::min(config.bounds_width, config.bounds_height) * 0.3f;
-
-    const float initial_speed = 10.0f;
-
-    std::mt19937 rng(kRandomSeed);
-
-    std::uniform_real_distribution<float> angle_distribution(0.0f, kTau);
-    std::uniform_real_distribution<float> radius_distribution(0.0f, 1.0f);
-    std::uniform_real_distribution<float> speed_distribution(-initial_speed, initial_speed);
-    std::uniform_real_distribution<float> mass_distribution(0.5f, 3.0f);
-
-    // generate a random position, velocity, mass, and radius for each particle
-    for (std::size_t index = 0; index < particles.x.size(); ++index) {
-        const float angle = angle_distribution(rng);
-
-        // sqrt maps uniform [0,1] to uniform circle distribution
-        const float placement_radius = std::sqrt(radius_distribution(rng)) * cloud_radius;
-        const float offset_x = std::cos(angle) * placement_radius;
-        const float offset_y = std::sin(angle) * placement_radius;
-
-        particles.x[index] = center_x + offset_x;
-        particles.y[index] = center_y + offset_y;
-
-        particles.vx[index] = speed_distribution(rng);
-        particles.vy[index] = speed_distribution(rng);
-
-        particles.mass[index] = mass_distribution(rng);
-
-        // radius directly proportional to mass
-        particles.radius[index] = mass_distribution(rng) * 2.0f;
+    for (std::size_t i = 0; i < std::min(particles.x.size(), kPositions.size()); ++i) {
+        particles.x[i] = kPositions[i].x;
+        particles.y[i] = kPositions[i].y;
+        particles.vx[i] = 0.0f;
+        particles.vy[i] = 0.0f;
+        particles.mass[i] = mass;
+        particles.radius[i] = radius;
     }
 }
 
@@ -125,86 +249,66 @@ void step_particles(
     ParticleView particles,
     const SimulationConfig& config,
     float dt,
-    SpatialGrid& grid,
+    std::span<const Edge> edges,
     std::span<float> ax,
     std::span<float> ay) noexcept {
-    // build grid from current positions before computing forces
-    grid.build(particles.x, particles.y, config.bounds_width, config.bounds_height, config.cell_size);
-
-    const float center_x = config.bounds_width * 0.5f;
-    const float center_y = config.bounds_height * 0.5f;
-
-    // prevent division by zero, and create infinite force at zero distance
-    const float inverse_softening = 1.0f / config.softening;
-
-    // compare squared distances to avoid sqrt in the neighbor loop
-    const float interaction_radius_sq = config.interaction_radius * config.interaction_radius;
-
     const std::size_t n = particles.x.size();
 
     // first pass: only compute forces for all particles in parallel
     // reads only from positions, writes only to ax/ay
     tbb::parallel_for(tbb::blocked_range<std::size_t>(0, n), [&](const tbb::blocked_range<std::size_t>& range) {
-        for (std::size_t index = range.begin(); index != range.end(); ++index) {
-            // global gravity: inverse cube falloff from the center
-            const float dx = center_x - particles.x[index];
-            const float dy = center_y - particles.y[index];
-            const float distance_squared = dx * dx + dy * dy + config.softening;
-            const float inverse_distance = 1.0f / std::sqrt(distance_squared);
-            const float falloff = inverse_distance * inverse_distance * inverse_distance;
+        for (std::size_t i = range.begin(); i != range.end(); ++i) {
+            float fax = 0.0f;
+            float fay = 0.0f;
 
-            const float gravity = config.attraction_strength * inverse_softening;
-            const float acceleration_scale = gravity * particles.mass[index] * falloff;
-
-            float fax = dx * acceleration_scale;
-            float fay = dy * acceleration_scale;
-
-            // local repulsion: linear falloff from neighbors within interaction_radius
-            // prevents particles from being too close to each other
-            const int cx = std::clamp(static_cast<int>(particles.x[index] / config.cell_size), 0, grid.grid_w() - 1);
-            const int cy = std::clamp(static_cast<int>(particles.y[index] / config.cell_size), 0, grid.grid_h() - 1);
-
-            // loop over the 3x3 neighborhood of cells
-            for (int ny = cy - 1; ny <= cy + 1; ++ny) {
-                for (int nx = cx - 1; nx <= cx + 1; ++nx) {
-                    for (const auto j : grid.cell_particles(nx, ny)) {
-                        // if is the current particle, skip
-                        if (j == index) {
-                            continue;
-                        }
-
-                        const float rdx = particles.x[index] - particles.x[j];
-                        const float rdy = particles.y[index] - particles.y[j];
-                        const float dist_sq = rdx * rdx + rdy * rdy;
-
-                        // same position or too far away, so no force
-                        if (dist_sq == 0.0f || dist_sq >= interaction_radius_sq) {
-                            continue;
-                        }
-
-                        const float dist = std::sqrt(dist_sq);
-                        const float contact = particles.radius[index] + particles.radius[j];
-
-                        float force{};
-                        if (dist < contact) {
-                            // overlap: strong force proportional to penetration depth
-                            const float penetration = contact - dist;
-                            force = config.repulsion_strength * (1.0f + penetration / contact) / dist;
-                        } else {
-                            // soft repulsion: linear falloff from contact surface to interaction_radius
-                            const float t = (dist - contact) / (config.interaction_radius - contact);
-                            force = config.repulsion_strength * (1.0f - t) / dist;
-                        }
-
-                        // apply the repulsion force away from the neighbor
-                        fax += rdx * force;
-                        fay += rdy * force;
-                    }
+            // pairwise 1/r^2 force between all particles
+            // positive = attractive (gravity)
+            // negative = repulsive (coulomb)
+            for (std::size_t j = 0; j < n; ++j) {
+                if (j == i) {
+                    continue;
                 }
+
+                // dx/dy point from j toward i (away from j)
+                const float dx = particles.x[i] - particles.x[j];
+                const float dy = particles.y[i] - particles.y[j];
+
+                const float dist_sq_soft = dx * dx + dy * dy + config.softening;
+                const float dist_soft = std::sqrt(dist_sq_soft);
+                const float inv_dist_cubed = 1.0f / (dist_sq_soft * dist_soft);
+
+                // negative force flips direction
+                fax -= config.force_strength * dx * inv_dist_cubed;
+                fay -= config.force_strength * dy * inv_dist_cubed;
             }
 
-            ax[index] = fax;
-            ay[index] = fay;
+            // spring attraction along graph edges
+            for (const auto& [a, b] : edges) {
+                if (a != i && b != i) {
+                    continue;
+                }
+
+                const std::size_t neighbor = (a == i) ? b : a;
+
+                // dx/dy point from i toward neighbor
+                const float dx = particles.x[neighbor] - particles.x[i];
+                const float dy = particles.y[neighbor] - particles.y[i];
+                const float dist_sq = dx * dx + dy * dy;
+
+                if (dist_sq == 0.0f) {
+                    continue;
+                }
+
+                const float dist = std::sqrt(dist_sq);
+
+                // force = spring_strength * (dist - rest_length)
+                const float force = config.spring_strength * (dist - config.spring_rest_length) / dist;
+                fax += dx * force;
+                fay += dy * force;
+            }
+
+            ax[i] = fax;
+            ay[i] = fay;
         }
     });
 
@@ -214,7 +318,7 @@ void step_particles(
 
     tbb::parallel_for(tbb::blocked_range<std::size_t>(0, n), [&](const tbb::blocked_range<std::size_t>& range) {
         for (std::size_t index = range.begin(); index != range.end(); ++index) {
-            // set velocity to current velocity plus acceleration towards the center
+            // set velocity to current velocity plus acceleration
             // with damping to prevent infinite acceleration
             particles.vx[index] = (particles.vx[index] + ax[index] * dt) * config.damping;
             particles.vy[index] = (particles.vy[index] + ay[index] * dt) * config.damping;
@@ -321,7 +425,10 @@ void ParticleSimulation::step(float dt) noexcept {
         return;
     }
 
-    step_particles(storage_.view(), config_, dt, grid_, ax_, ay_);
+    // rebuild grid every frame
+    grid_.build(storage_.view().x, storage_.view().y, config_.bounds_width, config_.bounds_height, config_.cell_size);
+
+    step_particles(storage_.view(), config_, dt, edges_, ax_, ay_);
 }
 
 const SimulationConfig& ParticleSimulation::config() const noexcept {
@@ -332,8 +439,13 @@ ConstParticleView ParticleSimulation::particles() const noexcept {
     return storage_.view();
 }
 
+std::span<const Edge> ParticleSimulation::edges() const noexcept {
+    return edges_;
+}
+
 void ParticleSimulation::initialize_particles() noexcept {
-    initialize_particle_state(storage_.view(), config_);
+    initialize_particle_state(storage_.view());
+    edges_.assign(kEdges.begin(), kEdges.end());
 }
 
 }  // namespace sim
